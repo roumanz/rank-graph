@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ORIS Ranking Tracker – Vývoj pořadí</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Vývoj pořadí v ORIS rankingu</h1>
+      <p class="subtitle">Porovnání vývoje umístění závodníků v čase (data se kešují v lokální databázi)</p>
+    </header>
+
+    <section class="controls-card">
+      <div class="control-row">
+        <!-- Typ rankingu -->
+        <div class="control-group">
+          <label for="rankingType">Typ rankingu</label>
+          <select id="rankingType">
+            <option value="">Načítám typy z ORISu…</option>
+          </select>
+        </div>
+
+        <!-- Období -->
+        <div class="control-group">
+          <label>Období</label>
+          <div class="period-toggle">
+            <button type="button" id="btnLastYear" class="btn-toggle active">Poslední rok</button>
+            <button type="button" id="btnCustomRange" class="btn-toggle">Vlastní Od – Do</button>
+          </div>
+        </div>
+
+        <div class="control-group custom-dates hidden" id="customDatesBox">
+          <div>
+            <label for="dateFrom">Od</label>
+            <input type="month" id="dateFrom">
+          </div>
+          <div>
+            <label for="dateTo">Do</label>
+            <input type="month" id="dateTo">
+          </div>
+        </div>
+      </div>
+
+      <hr class="divider">
+
+      <!-- Výběr závodníků -->
+      <div class="control-row">
+        <div class="control-group grow">
+          <label for="athleteSearch">Přidat závodníka (jméno nebo registračka, např. TZL8808)</label>
+          <div class="search-wrapper">
+            <input type="text" id="athleteSearch" placeholder="Začněte psát příjmení nebo registrační číslo…" autocomplete="off">
+            <div id="searchResults" class="dropdown hidden"></div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label for="clubCode">Nebo načíst oddíl (zkratka)</label>
+          <div class="club-box">
+            <input type="text" id="clubCode" placeholder="např. TZL" maxlength="4">
+            <button type="button" id="btnLoadClub" class="btn-secondary">Načíst členy</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Seznam členů oddílu pro rychlé zaklikání -->
+      <div id="clubMembersBox" class="club-members hidden">
+        <div class="club-members-header">
+          <strong id="clubMembersTitle">Členové oddílu</strong>
+          <button type="button" id="btnCloseClub" class="btn-link">Zavřít seznam</button>
+        </div>
+        <div id="clubMembersList" class="club-members-list"></div>
+      </div>
+
+      <!-- Vybraní závodníci (štítky) -->
+      <div class="selected-box">
+        <span class="selected-label">Vybraní závodníci v grafu:</span>
+        <div id="selectedAthletes" class="chips"></div>
+      </div>
+    </section>
+
+    <!-- Stavová hláška (načítání z ORISu / chyba) -->
+    <div id="statusBar" class="status-bar hidden"></div>
+
+    <!-- Plátno pro graf -->
+    <section class="chart-card">
+      <div class="chart-wrapper">
+        <canvas id="rankingChart"></canvas>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
