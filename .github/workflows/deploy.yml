@@ -1,0 +1,31 @@
+name: Deploy na Wedos FTP
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Nahrát soubory přes FTPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Stažení kódu z repozitáře
+        uses: actions/checkout@v4
+
+      - name: Synchronizace souborů na Wedos
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          server-dir: /www/subdom/ranking/ # upravte podle vaší cílové složky na Wedosu
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/README.md
+            **/database.sql
+            **/config.example.php
+            **/config.php
