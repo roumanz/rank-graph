@@ -35,6 +35,8 @@ const elClubBox = document.getElementById('clubMembersBox');
 const elClubTitle = document.getElementById('clubMembersTitle');
 const elClubList = document.getElementById('clubMembersList');
 const elBtnCloseClub = document.getElementById('btnCloseClub');
+const elBtnAddAllClub = document.getElementById('btnAddAllClub');
+const elBtnClearClub = document.getElementById('btnClearClub');
 const elSelectedChips = document.getElementById('selectedAthletes');
 const elStatus = document.getElementById('statusBar');
 const elBtnShareLink = document.getElementById('btnShareLink');
@@ -302,6 +304,7 @@ elBtnLoadClub.addEventListener('click', async () => {
   showStatus('');
 
   const list = data.athletes || [];
+  state.clubMembers = list;
   elClubTitle.textContent = `Členové oddílu ${club} (${list.length})`;
   elClubList.innerHTML = '';
 
@@ -328,6 +331,43 @@ elBtnLoadClub.addEventListener('click', async () => {
 
 elBtnCloseClub.addEventListener('click', () => {
   elClubBox.classList.add('hidden');
+});
+
+elBtnAddAllClub.addEventListener('click', () => {
+  if (!state.clubMembers.length) return;
+
+  const existingRegs = new Set(state.selectedAthletes.map(a => a.reg_no));
+  let added = false;
+
+  state.clubMembers.forEach(a => {
+    if (!existingRegs.has(a.reg_no)) {
+      state.selectedAthletes.push({ reg_no: a.reg_no, name: a.name });
+      existingRegs.add(a.reg_no);
+      added = true;
+    }
+  });
+
+  if (added) {
+    saveSelected();
+    renderSelectedChips();
+    updateClubPillsState();
+    refreshChart();
+  }
+});
+
+elBtnClearClub.addEventListener('click', () => {
+  if (!state.clubMembers.length) return;
+
+  const clubRegs = new Set(state.clubMembers.map(a => a.reg_no));
+  const beforeCount = state.selectedAthletes.length;
+  state.selectedAthletes = state.selectedAthletes.filter(a => !clubRegs.has(a.reg_no));
+
+  if (state.selectedAthletes.length !== beforeCount) {
+    saveSelected();
+    renderSelectedChips();
+    updateClubPillsState();
+    refreshChart();
+  }
 });
 
 // Přepínání období a typu rankingu
