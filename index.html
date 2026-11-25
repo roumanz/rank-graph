@@ -9,9 +9,15 @@
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>Vývoj pořadí v ORIS rankingu</h1>
-      <p class="subtitle">Porovnání vývoje umístění závodníků v čase (data se kešují v lokální databázi)</p>
+    <header style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+      <div>
+        <h1>Vývoj pořadí v ORIS rankingu</h1>
+        <p class="subtitle">Porovnání vývoje umístění závodníků v čase (data se kešují v lokální databázi)</p>
+      </div>
+      <div class="share-actions" style="display:flex;align-items:center;gap:8px;padding-top:4px;">
+        <span id="shareFeedback" style="font-size:0.85rem;color:#059669;"></span>
+        <button type="button" id="btnShareLink" class="btn-secondary">Sdílet odkaz</button>
+      </div>
     </header>
 
     <section class="controls-card">
@@ -75,14 +81,10 @@
         <div id="clubMembersList" class="club-members-list"></div>
       </div>
 
-      <!-- Vybraní závodníci (štítky) + sdílení -->
+      <!-- Vybraní závodníci (štítky) -->
       <div class="selected-box">
         <span class="selected-label">Vybraní závodníci v grafu:</span>
         <div id="selectedAthletes" class="chips"></div>
-        <div class="share-actions" style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-          <button type="button" id="btnShareLink" class="btn-secondary">Sdílet odkaz</button>
-          <span id="shareFeedback" style="font-size:0.85rem;color:#059669;"></span>
-        </div>
       </div>
     </section>
 
