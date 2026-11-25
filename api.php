@@ -9,6 +9,10 @@ if (!file_exists(__DIR__ . '/config.php')) {
 
 require_once __DIR__ . '/config.php';
 
+if (!defined('ORIS_API_URL')) {
+    define('ORIS_API_URL', 'https://oris.ceskyorientak.cz/API/');
+}
+
 try {
     $pdo = new PDO(
         'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
@@ -27,36 +31,44 @@ try {
 
 $action = $_GET['action'] ?? '';
 
-/**
- * Volání ORIS API přes cURL / file_get_contents
- */
-function callOrisApi(array $params): array {
-    $params['format'] = 'json';
-    $url = ORIS_API_URL . '?' . http_build_query($params);
-
+function httpGet(string $url): ?string {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 20,
-        CURLOPT_USERAGENT => 'ORIS-Ranking-Tracker/1.0',
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => 25,
+        CURLOPT_USERAGENT => 'ORIS-Ranking-Tracker/1.1',
     ]);
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
     if ($response === false || $httpCode !== 200) {
+        return null;
+    }
+    return $response;
+}
+
+function callOrisApi(array $params): array {
+    $params['format'] = 'json';
+    $url = rtrim(ORIS_API_URL, '/') . '/?' . http_build_query($params);
+    $raw = httpGet($url);
+    if ($raw === null) {
         return [];
     }
-
-    $decoded = json_decode($response, true);
+    $decoded = json_decode($raw, true);
     return is_array($decoded) ? $decoded : [];
 }
 
+function getOrisBaseOrigin(): string {
+    $parts = parse_url(ORIS_API_URL);
+    $scheme = $parts['scheme'] ?? 'https';
+    $host = $parts['host'] ?? 'oris.ceskyorientak.cz';
+    return $scheme . '://' . $host;
+}
+
 /**
- * Zajistí, že máme v DB typy rankingů z ORISu (lesní i sprintový OB)
- */
-/**
- * Zajistí, že máme v DB typy rankingů z ORISu (lesní i sprintový OB)
+ * Zajistí, že máme v DB typy rankingů z ORISu (lesní = 2, sprintový = 8)
  */
 function ensureRankingTypes(PDO $pdo): array {
     $stmt = $pdo->query("SELECT id, code, name FROM ranking_types ORDER BY id ASC");
@@ -66,17 +78,15 @@ function ensureRankingTypes(PDO $pdo): array {
         return $types;
     }
 
-    // ORIS vyžaduje parametr sport=1 (OB)
     $orisData = callOrisApi([
         'method' => 'getRankingTypes',
         'sport' => 1,
     ]);
     $list = $orisData['Data'] ?? [];
 
-    // Povolená ID: 2 = Lesní ranking, 8 = Sprintový ranking (případně 1 = Standardní do 31.12.2025)
     $allowedIds = [2, 8];
-
     $insert = $pdo->prepare("INSERT IGNORE INTO ranking_types (id, code, name) VALUES (:id, :code, :name)");
+
     foreach ($list as $item) {
         $id = (int)($item['ID'] ?? 0);
         $name = trim($item['NameCZ'] ?? $item['Name'] ?? '');
@@ -95,27 +105,123 @@ function ensureRankingTypes(PDO $pdo): array {
 }
 
 /**
- * Vrátí seznam prvních dnů v měsíci v daném intervalu (ORIS vydává ranking k 1. dni v měsíci)
+ * Vrátí seznam konců měsíců v daném intervalu (např. 2026-11-30)
  */
 function getMonthlyDates(string $from, string $to): array {
     $start = new DateTime(date('Y-m-01', strtotime($from)));
     $end = new DateTime(date('Y-m-01', strtotime($to)));
-    $today = new DateTime(date('Y-m-01'));
+    $todayEnd = new DateTime(date('Y-m-t'));
 
-    if ($end > $today) {
-        $end = $today;
+    $endMonthLastDay = new DateTime($end->format('Y-m-t'));
+    if ($endMonthLastDay > $todayEnd) {
+        $endMonthLastDay = $todayEnd;
     }
 
     $dates = [];
-    while ($start <= $end) {
-        $dates[] = $start->format('Y-m-d');
+    while ($start <= $endMonthLastDay) {
+        $dates[] = $start->format('Y-m-t');
         $start->modify('+1 month');
     }
     return $dates;
 }
 
+function normalizeText(string $str): string {
+    $str = trim($str);
+    if ($str === '') {
+        return '';
+    }
+    if (!mb_check_encoding($str, 'UTF-8')) {
+        $converted = @iconv('CP1250', 'UTF-8//IGNORE', $str);
+        if ($converted !== false) {
+            $str = $converted;
+        }
+    }
+    $str = preg_replace('/^\xEF\xBB\xBF/', '', $str);
+    return trim($str);
+}
+
+function normalizeHeader(string $h): string {
+    $h = mb_strtolower(normalizeText($h), 'UTF-8');
+    return preg_replace('/[^a-z0-9]/u', '', $h);
+}
+
 /**
- * Zkontroluje chybějící data v DB a stáhne je z ORISu
+ * Stáhne a naparsuje CSV export rankingu pro dané datum, typ a pohlaví
+ */
+function fetchRankingCsvRows(string $date, int $rankType, string $gender): array {
+    $origin = getOrisBaseOrigin();
+    $url = $origin . '/ranking_export?' . http_build_query([
+        'date' => $date,
+        'sport' => 1,
+        'gender' => $gender,
+        'ranktype' => $rankType,
+        'csv' => 1,
+    ]);
+
+    $raw = httpGet($url);
+    if ($raw === null || trim($raw) === '') {
+        return [];
+    }
+
+    $raw = normalizeText($raw);
+    $lines = preg_split('/\r\n|\r|\n/', $raw);
+    $lines = array_values(array_filter($lines, fn($l) => trim($l) !== ''));
+
+    if (count($lines) < 2) {
+        return [];
+    }
+
+    // Automatická detekce oddělovače (; nebo ,)
+    $delimiter = (substr_count($lines[0], ';') >= substr_count($lines[0], ',')) ? ';' : ',';
+
+    $headerCells = str_getcsv($lines[0], $delimiter);
+    $colMap = [];
+    foreach ($headerCells as $idx => $col) {
+        $norm = normalizeHeader($col);
+        if (in_array($norm, ['misto', 'poradi', 'rank', 'place'], true)) {
+            $colMap['rank'] = $idx;
+        } elseif (in_array($norm, ['jmeno', 'name', 'zavodnik'], true)) {
+            $colMap['name'] = $idx;
+        } elseif (in_array($norm, ['regcislo', 'regno', 'registrace', 'reg'], true)) {
+            $colMap['reg'] = $idx;
+        }
+    }
+
+    // Záložní pozice sloupců dle tabulky na obrázku (0: Místo, 1: Jméno, 2: Reg. číslo)
+    $rankIdx = $colMap['rank'] ?? 0;
+    $nameIdx = $colMap['name'] ?? 1;
+    $regIdx = $colMap['reg'] ?? 2;
+
+    $parsed = [];
+    for ($i = 1; $i < count($lines); $i++) {
+        $cells = str_getcsv($lines[$i], $delimiter);
+        if (count($cells) <= max($rankIdx, $nameIdx, $regIdx)) {
+            continue;
+        }
+
+        $rank = (int)preg_replace('/[^0-9]/', '', (string)$cells[$rankIdx]);
+        $name = normalizeText((string)$cells[$nameIdx]);
+        $regNo = strtoupper(normalizeText((string)$cells[$regIdx]));
+
+        if ($regNo === '' || $rank <= 0) {
+            continue;
+        }
+
+        $club = strtoupper(substr($regNo, 0, 3));
+        $parsed[] = [
+            'reg_no' => $regNo,
+            'name' => $name ?: $regNo,
+            'club' => $club,
+            'gender' => $gender,
+            'rank_pos' => $rank,
+        ];
+    }
+
+    return $parsed;
+}
+
+/**
+ * Zkontroluje chybějící měsíce v DB a stáhne je z CSV exportu ORISu
  */
 function syncMissingSnapshots(PDO $pdo, int $typeId, array $dates): int {
     if (empty($dates)) {
@@ -131,8 +237,9 @@ function syncMissingSnapshots(PDO $pdo, int $typeId, array $dates): int {
     $fetchedCount = 0;
 
     $insertRow = $pdo->prepare("
-        INSERT IGNORE INTO rankings (type_id, ranking_date, reg_no, name, club, gender, rank_pos)
+        INSERT INTO rankings (type_id, ranking_date, reg_no, name, club, gender, rank_pos)
         VALUES (:type_id, :ranking_date, :reg_no, :name, :club, :gender, :rank_pos)
+        ON DUPLICATE KEY UPDATE name = VALUES(name), club = VALUES(club), rank_pos = VALUES(rank_pos)
     ");
     $insertSnap = $pdo->prepare("
         INSERT IGNORE INTO ranking_snapshots (type_id, ranking_date, rows_count)
@@ -140,55 +247,27 @@ function syncMissingSnapshots(PDO $pdo, int $typeId, array $dates): int {
     ");
 
     foreach ($missing as $date) {
-        // Bezpečnostní pojistka: max 15 stažení v jednom HTTP požadavku, aby nevypršel timeout
-        if ($fetchedCount >= 15) {
+        if ($fetchedCount >= 12) {
             break;
         }
 
-        // ORIS API: getRanking (parametry Type / RankingTypeID dle ORIS specifikace)
-        $orisData = callOrisApi([
-            'method' => 'getRanking',
-            'Type' => $typeId,
-            'Date' => $date,
-        ]);
+        $rowsM = fetchRankingCsvRows($date, $typeId, 'M');
+        $rowsF = fetchRankingCsvRows($date, $typeId, 'F');
+        $allRows = array_merge($rowsM, $rowsF);
+        $count = count($allRows);
 
-        // Záložní pokus, pokud ORIS očekává parametr RankingTypeID
-        if (empty($orisData['Data'])) {
-            $orisData = callOrisApi([
-                'method' => 'getRanking',
-                'RankingTypeID' => $typeId,
-                'Date' => $date,
-            ]);
-        }
-
-        $rows = $orisData['Data'] ?? [];
-        $count = 0;
-
-        if (is_array($rows) && !empty($rows)) {
+        if ($count > 0) {
             $pdo->beginTransaction();
-            foreach ($rows as $row) {
-                $regNo = strtoupper(trim($row['RegNo'] ?? ''));
-                $rank = (int)($row['Rank'] ?? $row['Place'] ?? 0);
-                if ($regNo === '' || $rank <= 0) {
-                    continue;
-                }
-
-                $firstName = trim($row['FirstName'] ?? '');
-                $lastName = trim($row['LastName'] ?? '');
-                $fullName = trim($row['Name'] ?? "$lastName $firstName");
-                $club = strtoupper(substr($regNo, 0, 3));
-                $gender = strtoupper(trim($row['Gender'] ?? ''));
-
+            foreach ($allRows as $row) {
                 $insertRow->execute([
                     ':type_id' => $typeId,
                     ':ranking_date' => $date,
-                    ':reg_no' => $regNo,
-                    ':name' => $fullName,
-                    ':club' => $club,
-                    ':gender' => $gender ?: null,
-                    ':rank_pos' => $rank,
+                    ':reg_no' => $row['reg_no'],
+                    ':name' => $row['name'],
+                    ':club' => $row['club'],
+                    ':gender' => $row['gender'],
+                    ':rank_pos' => $row['rank_pos'],
                 ]);
-                $count++;
             }
             $insertSnap->execute([
                 ':type_id' => $typeId,
@@ -197,7 +276,6 @@ function syncMissingSnapshots(PDO $pdo, int $typeId, array $dates): int {
             ]);
             $pdo->commit();
         } else {
-            // Zapíšeme prázdný snapshot (např. pokud v daném měsíci ranking nevyšel), ať se neptáme znovu
             $insertSnap->execute([
                 ':type_id' => $typeId,
                 ':ranking_date' => $date,
@@ -211,8 +289,6 @@ function syncMissingSnapshots(PDO $pdo, int $typeId, array $dates): int {
     return $fetchedCount;
 }
 
-// --- ROUTOVÁNÍ AKCÍ ---
-
 if ($action === 'types') {
     $types = ensureRankingTypes($pdo);
     echo json_encode(['types' => $types]);
@@ -220,13 +296,12 @@ if ($action === 'types') {
 }
 
 if ($action === 'search') {
-    $typeId = (int)($_GET['type_id'] ?? 1);
+    $typeId = (int)($_GET['type_id'] ?? 2);
     $q = trim($_GET['q'] ?? '');
     $club = strtoupper(trim($_GET['club'] ?? ''));
 
-    // Pokud je DB úplně prázdná, stáhneme nejprve aktuální měsíc, aby bylo v čem vyhledávat
-    $currentMonth = date('Y-m-01');
-    syncMissingSnapshots($pdo, $typeId, [$currentMonth]);
+    $currentMonthEnd = date('Y-m-t');
+    syncMissingSnapshots($pdo, $typeId, [$currentMonthEnd]);
 
     if ($club !== '') {
         $stmt = $pdo->prepare("
@@ -261,7 +336,7 @@ if ($action === 'search') {
 }
 
 if ($action === 'series') {
-    $typeId = (int)($_GET['type_id'] ?? 1);
+    $typeId = (int)($_GET['type_id'] ?? 2);
     $from = $_GET['from'] ?? date('Y-m-d', strtotime('-1 year'));
     $to = $_GET['to'] ?? date('Y-m-d');
     $regNosRaw = $_GET['reg_nos'] ?? '';
@@ -300,7 +375,6 @@ if ($action === 'series') {
     $stmt->execute($params);
     $rows = $stmt->fetchAll();
 
-    // Seskupení podle závodníka
     $byAthlete = [];
     foreach ($regNos as $reg) {
         $byAthlete[$reg] = [
