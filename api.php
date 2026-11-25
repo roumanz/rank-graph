@@ -227,8 +227,12 @@ if ($action === 'search') {
         $stmt = $pdo->prepare("
             SELECT reg_no, MAX(name) AS name, club, MAX(gender) AS gender, MIN(rank_pos) AS best_rank
             FROM rankings
-            WHERE type_id = :type_id AND club = :club
+            WHERE type_id = :type_id
+              AND club = :club
+              AND rank_pos IS NOT NULL
+              AND rank_pos > 0
             GROUP BY reg_no, club
+            HAVING MIN(rank_pos) > 0
             ORDER BY best_rank ASC, name ASC
         ");
         $stmt->execute([':type_id' => $typeId, ':club' => $club]);
