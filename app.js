@@ -56,6 +56,7 @@ const elBtnGenderF = document.getElementById('btnGenderF');
 const elBtnLoadTop10 = document.getElementById('btnLoadTop10');
 const elBtnAddTop10 = document.getElementById('btnAddTop10');
 const elSelectedChips = document.getElementById('selectedAthletes');
+const elBtnClearAllAthletes = document.getElementById('btnClearAllAthletes');
 const elStatus = document.getElementById('statusBar');
 const elBtnShareLink = document.getElementById('btnShareLink');
 const elShareFeedback = document.getElementById('shareFeedback');
@@ -206,7 +207,11 @@ async function loadRankingTypes() {
 
 function saveSelected() {
   try {
-    localStorage.setItem('oris_selected_athletes', JSON.stringify(state.selectedAthletes));
+    if (state.selectedAthletes.length === 0) {
+      localStorage.removeItem('oris_selected_athletes');
+    } else {
+      localStorage.setItem('oris_selected_athletes', JSON.stringify(state.selectedAthletes));
+    }
   } catch (_) {
     // Ignorovat chyby úložiště (např. privátní režim)
   }
@@ -216,8 +221,11 @@ function renderSelectedChips() {
   elSelectedChips.innerHTML = '';
   if (state.selectedAthletes.length === 0) {
     elSelectedChips.innerHTML = '<span style="color:#9ca3af;font-size:0.85rem;">Zatím nikdo nevybrán – vyhledejte závodníka výše.</span>';
+    if (elBtnClearAllAthletes) elBtnClearAllAthletes.classList.add('hidden');
     return;
   }
+
+  if (elBtnClearAllAthletes) elBtnClearAllAthletes.classList.remove('hidden');
 
   state.selectedAthletes.forEach((athlete, idx) => {
     const color = COLORS[idx % COLORS.length];
@@ -279,6 +287,19 @@ function removeAthlete(regNo) {
   renderSelectedChips();
   updateClubPillsState();
   refreshChart();
+}
+
+function clearAllAthletes() {
+  if (!state.selectedAthletes.length) return;
+  state.selectedAthletes = [];
+  saveSelected();
+  renderSelectedChips();
+  updateClubPillsState();
+  refreshChart();
+}
+
+if (elBtnClearAllAthletes) {
+  elBtnClearAllAthletes.addEventListener('click', clearAllAthletes);
 }
 
 function updateClubPillsState() {
