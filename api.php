@@ -29,10 +29,9 @@ try {
     exit;
 }
 
-$action = $_GET['action'] ?? '';
+$action =$_GET['action'] ?? '';
 
-function fetchCsvForGender(string $date, int $rankType, string $gender): array {
-    $url = 'https://oris.ceskyorientak.cz/ranking_export?' . http_build_query([
+function fetchCsvForGender(string $date, int$rankType, string $gender): array {$url = 'https://oris.ceskyorientak.cz/ranking_export?' . http_build_query([
         'date' => $date,
         'sport' => 1,
         'gender' => $gender,
@@ -51,29 +50,26 @@ function fetchCsvForGender(string $date, int $rankType, string $gender): array {
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    if ($raw === false || $code !== 200 || trim($raw) === '') {
+    if ($raw === false || $code !== 200 \vert{}\vert{} trim($raw) === '') {
         return [];
     }
 
     if (function_exists('mb_check_encoding') && !mb_check_encoding($raw, 'UTF-8')) {
-        $conv = @iconv('CP1250', 'UTF-8//IGNORE', $raw);
-        if ($conv !== false && $conv !== '') {
-            $raw = $conv;
+        $conv = @iconv('CP1250', 'UTF-8//IGNORE',$raw);
+        if ($conv !== false &&$conv !== '') {
+            $raw =$conv;
         }
     }
     $raw = str_replace("\xEF\xBB\xBF", '', $raw);
 
-    $lines = preg_split('/\r\n|\r|\n/', trim($raw));
-    if (!is_array($lines) || count($lines) < 2) {
+    $lines = preg_split('/\r\n\vert{}\r\vert{}\n/', trim($raw));
+    if (!is_array($lines) \vert{}\vert{} count($lines) < 2) {
         return [];
     }
 
     $rows = [];
-    for ($i = 1; $i < count($lines); $i++) {
-        if (trim($lines[$i]) === '') {
-            continue;
-        }
-        $c = str_getcsv($lines[$i], ';');
+    for ($i = 1; $i < count($lines);$i++) {
+        if (trim($lines[$i]) === '') { continue; }$c = str_getcsv($lines[$i], ';');
         if (count($c) < 4) {
             continue;
         }
@@ -83,20 +79,19 @@ function fetchCsvForGender(string $date, int $rankType, string $gender): array {
         $firstName = trim((string)$c[2]);
         $regNo = strtoupper(trim((string)$c[3]));
 
-        if ($regNo === '' || $rankPos <= 0) {
+        if ($regNo === '' \vert{}\vert{}$rankPos <= 0) {
             continue;
         }
 
-        $fullName = trim($firstName . ' ' . $surname);
+        $fullName = trim($firstName . ' ' .$surname);
         if ($fullName === '') {
-            $fullName = $regNo;
+            $fullName =$regNo;
         }
 
         $rows[] = [
             'reg_no' => $regNo,
             'name' => $fullName,
-            'club' => substr($regNo, 0, 3),
-            'gender' => $gender,
+            'club' => substr($regNo, 0, 3), 'gender' =>$gender,
             'rank_pos' => $rankPos,
         ];
     }
@@ -104,38 +99,32 @@ function fetchCsvForGender(string $date, int $rankType, string $gender): array {
     return $rows;
 }
 
-function getMonthEndDates(string $from, string $to): array {
-    $start = new DateTime(date('Y-m-01', strtotime($from)));
-    $end = new DateTime(date('Y-m-01', strtotime($to)));
-    $todayEnd = new DateTime(date('Y-m-t'));
+function getMonthEndDates(string $from, string $to): array {$start = new DateTime(date('Y-m-01', strtotime($from)));$end = new DateTime(date('Y-m-01', strtotime($to)));$todayEnd = new DateTime(date('Y-m-t'));
 
     $endLastDay = new DateTime($end->format('Y-m-t'));
-    if ($endLastDay > $todayEnd) {
-        $endLastDay = $todayEnd;
+    if ($endLastDay >$todayEnd) {
+        $endLastDay =$todayEnd;
     }
 
     $dates = [];
-    while ($start <= $endLastDay) {
-        $dates[] = $start->format('Y-m-t');
-        $start->modify('+1 month');
+    while ($start <= $endLastDay) {$dates[] = $start->format('Y-m-t');$start->modify('+1 month');
     }
     return $dates;
 }
 
-function syncDates(PDO $pdo, int $typeId, array $dates, int $limit = 12): int {
+function syncDates(PDO $pdo, int$typeId, array $dates, int$limit = 12): int {
     if (empty($dates)) {
         return 0;
     }
 
     $placeholders = implode(',', array_fill(0, count($dates), '?'));
-    $stmt = $pdo->prepare("SELECT ranking_date FROM ranking_snapshots WHERE type_id = ? AND ranking_date IN ($placeholders)");
-    $stmt->execute(array_merge([$typeId], $dates));
+    $stmt =$pdo->prepare("SELECT ranking_date FROM ranking_snapshots WHERE type_id = ? AND ranking_date IN ($placeholders)");
+    $stmt->execute(array_merge([$typeId],$dates));
     $existing = array_column($stmt->fetchAll(), 'ranking_date');
 
-    $missing = array_values(array_diff($dates, $existing));
-    $synced = 0;
+    $missing = array_values(array_diff($dates, $existing));$synced = 0;
 
-    $insRow = $pdo->prepare("
+    $insRow =$pdo->prepare("
         INSERT INTO rankings (type_id, ranking_date, reg_no, name, club, gender, rank_pos)
         VALUES (:type_id, :ranking_date, :reg_no, :name, :club, :gender, :rank_pos)
         ON DUPLICATE KEY UPDATE
@@ -145,25 +134,22 @@ function syncDates(PDO $pdo, int $typeId, array $dates, int $limit = 12): int {
             rank_pos = VALUES(rank_pos)
     ");
 
-    $insSnap = $pdo->prepare("
+    $insSnap =$pdo->prepare("
         INSERT INTO ranking_snapshots (type_id, ranking_date, rows_count)
         VALUES (:type_id, :ranking_date, :rows_count)
         ON DUPLICATE KEY UPDATE rows_count = VALUES(rows_count)
     ");
 
-    foreach ($missing as $date) {
-        if ($synced >= $limit) {
+    foreach ($missing as$date) {
+        if ($synced >=$limit) {
             break;
         }
 
-        $rowsM = fetchCsvForGender($date, $typeId, 'M');
-        $rowsF = fetchCsvForGender($date, $typeId, 'F');
-        $all = array_merge($rowsM, $rowsF);
+        $rowsM = fetchCsvForGender($date,$typeId, 'M');
+        $rowsF = fetchCsvForGender($date, $typeId, 'F');$all = array_merge($rowsM,$rowsF);
 
-        if (!empty($all)) {
-            $pdo->beginTransaction();
-            foreach ($all as $r) {
-                $insRow->execute([
+        if (!empty($all)) {$pdo->beginTransaction();
+            foreach ($all as $r) {$insRow->execute([
                     ':type_id' => $typeId,
                     ':ranking_date' => $date,
                     ':reg_no' => $r['reg_no'],
@@ -194,141 +180,6 @@ function syncDates(PDO $pdo, int $typeId, array $dates, int $limit = 12): int {
 }
 
 if ($action === 'types') {
-    $types = $pdo->query("SELECT id, code, name FROM ranking_types ORDER BY id ASC")->fetchAll();
+    $types =$pdo->query("SELECT id, code, name FROM ranking_types ORDER BY id ASC")->fetchAll();
     if (empty($types)) {
-        $url = rtrim(ORIS_API_URL, '/') . '/?format=json&method=getRankingTypes&sport=1';
-        $raw = @file_get_contents($url);
-        $data = $raw ? json_decode($raw, true) : null;
-        if (is_array($data) && !empty($data['Data'])) {
-            $ins = $pdo->prepare("INSERT IGNORE INTO ranking_types (id, code, name) VALUES (:id, :code, :name)");
-            foreach ($data['Data'] as $item) {
-                $id = (int)($item['ID'] ?? 0);
-                $name = trim((string)($item['NameCZ'] ?? $item['Name'] ?? ''));
-                if (($id === 2 || $id === 8) && $name !== '') {
-                    $code = ($id === 8) ? 'sprint' : 'forest';
-                    $ins->execute([':id' => $id, ':code' => $code, ':name' => $name]);
-                }
-            }
-            $types = $pdo->query("SELECT id, code, name FROM ranking_types ORDER BY id ASC")->fetchAll();
-        }
-    }
-    echo json_encode(['types' => $types]);
-    exit;
-}
-
-if ($action === 'search') {
-    $typeId = (int)($_GET['type_id'] ?? 2);
-    $q = trim($_GET['q'] ?? '');
-    $club = strtoupper(trim($_GET['club'] ?? ''));
-
-    syncDates($pdo, $typeId, [date('Y-m-t')], 1);
-
-    if ($club !== '') {
-        $stmt = $pdo->prepare("
-            SELECT reg_no, MAX(name) AS name, club, MAX(gender) AS gender, MIN(rank_pos) AS best_rank
-            FROM rankings
-            WHERE type_id = :type_id
-              AND club = :club
-              AND rank_pos IS NOT NULL
-              AND rank_pos > 0
-            GROUP BY reg_no, club
-            HAVING MIN(rank_pos) > 0
-            ORDER BY best_rank ASC, name ASC
-        ");
-        $stmt->execute([':type_id' => $typeId, ':club' => $club]);
-        echo json_encode(['athletes' => $stmt->fetchAll()]);
-        exit;
-    }
-
-    if (strlen($q) < 2) {
-        echo json_encode(['athletes' => []]);
-        exit;
-    }
-
-    $like = '%' . $q . '%';
-    $stmt = $pdo->prepare("
-        SELECT reg_no, MAX(name) AS name, club, MAX(gender) AS gender, MIN(rank_pos) AS best_rank
-        FROM rankings
-        WHERE type_id = :type_id AND (reg_no LIKE :q1 OR name LIKE :q2)
-        GROUP BY reg_no, club
-        ORDER BY best_rank ASC, name ASC
-        LIMIT 30
-    ");
-    $stmt->execute([':type_id' => $typeId, ':q1' => $like, ':q2' => $like]);
-    echo json_encode(['athletes' => $stmt->fetchAll()]);
-    exit;
-}
-
-if ($action === 'series') {
-    $typeId = (int)($_GET['type_id'] ?? 2);
-    $from = $_GET['from'] ?? date('Y-m-d', strtotime('-1 year'));
-    $to = $_GET['to'] ?? date('Y-m-d');
-    $regNosRaw = $_GET['reg_nos'] ?? '';
-
-    $regNos = array_values(array_filter(array_map(
-        fn($r) => strtoupper(trim($r)),
-        explode(',', $regNosRaw)
-    )));
-
-    $dates = getMonthEndDates($from, $to);
-    $newlySynced = syncDates($pdo, $typeId, $dates, 12);
-
-    if (empty($regNos) || empty($dates)) {
-        echo json_encode([
-            'dates' => $dates,
-            'series' => [],
-            'newly_fetched' => $newlySynced,
-        ]);
-        exit;
-    }
-
-    $regPlaceholders = implode(',', array_fill(0, count($regNos), '?'));
-    $datePlaceholders = implode(',', array_fill(0, count($dates), '?'));
-
-    $sql = "
-        SELECT reg_no, name, ranking_date, rank_pos
-        FROM rankings
-        WHERE type_id = ?
-          AND reg_no IN ($regPlaceholders)
-          AND ranking_date IN ($datePlaceholders)
-        ORDER BY ranking_date ASC
-    ";
-
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute(array_merge([$typeId], $regNos, $dates));
-    $rows = $stmt->fetchAll();
-
-    $byAthlete = [];
-    foreach ($regNos as $reg) {
-        $byAthlete[$reg] = [
-            'reg_no' => $reg,
-            'name' => $reg,
-            'points' => array_fill_keys($dates, null),
-        ];
-    }
-
-    foreach ($rows as $row) {
-        $reg = $row['reg_no'];
-        $byAthlete[$reg]['name'] = $row['name'];
-        $byAthlete[$reg]['points'][$row['ranking_date']] = (int)$row['rank_pos'];
-    }
-
-    $series = [];
-    foreach ($byAthlete as $item) {
-        $series[] = [
-            'reg_no' => $item['reg_no'],
-            'name' => $item['name'],
-            'data' => array_values($item['points']),
-        ];
-    }
-
-    echo json_encode([
-        'dates' => $dates,
-        'series' => $series,
-        'newly_fetched' => $newlySynced,
-    ]);
-    exit;
-}
-
-http_response_code(400);
-echo json_encode(['error' => 'Neznama akce API']);
+        $url = rtrim(ORIS_API_URL, '/') . '/?format=json&method=getRankingTypes&sport=1';$raw = @file_get_contents($url);$data = $raw ? json_decode($
