@@ -55,6 +55,9 @@ function callOrisApi(array $params): array {
 /**
  * Zajistí, že máme v DB typy rankingů z ORISu (lesní i sprintový OB)
  */
+/**
+ * Zajistí, že máme v DB typy rankingů z ORISu (lesní i sprintový OB)
+ */
 function ensureRankingTypes(PDO $pdo): array {
     $stmt = $pdo->query("SELECT id, code, name FROM ranking_types ORDER BY id ASC");
     $types = $stmt->fetchAll();
@@ -63,18 +66,23 @@ function ensureRankingTypes(PDO $pdo): array {
         return $types;
     }
 
-    $orisData = callOrisApi(['method' => 'getRankingTypes']);
+    // ORIS vyžaduje parametr sport=1 (OB)
+    $orisData = callOrisApi([
+        'method' => 'getRankingTypes',
+        'sport' => 1,
+    ]);
     $list = $orisData['Data'] ?? [];
+
+    // Povolená ID: 2 = Lesní ranking, 8 = Sprintový ranking (případně 1 = Standardní do 31.12.2025)
+    $allowedIds = [2, 8];
 
     $insert = $pdo->prepare("INSERT IGNORE INTO ranking_types (id, code, name) VALUES (:id, :code, :name)");
     foreach ($list as $item) {
         $id = (int)($item['ID'] ?? 0);
         $name = trim($item['NameCZ'] ?? $item['Name'] ?? '');
-        $sportId = (string)($item['SportID'] ?? '');
 
-        // Filtrujeme primárně OB (SportID = 1), případně podle názvu lesní / sprint
-        if ($id > 0 && ($sportId === '1' || stripos($name, 'OB') !== false || stripos($name, 'sprint') !== false || stripos($name, 'les') !== false)) {
-            $code = (stripos($name, 'sprint') !== false) ? 'sprint' : 'forest';
+        if (in_array($id, $allowedIds, true) && $name !== '') {
+            $code = ($id === 8 || stripos($name, 'sprint') !== false) ? 'sprint' : 'forest';
             $insert->execute([
                 ':id' => $id,
                 ':code' => $code,
