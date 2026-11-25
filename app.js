@@ -409,11 +409,12 @@ async function refreshChart() {
       });
     });
 
+const POINT_STYLES = ['circle', 'rectRot', 'triangle', 'rect', 'star'];
+
     const datasets = rawSeries.map((s, idx) => {
       const color = COLORS[idx % COLORS.length];
       const dash = DASH_PATTERNS[idx % DASH_PATTERNS.length];
 
-      // Skutečné pořadí držíme zvlášť pro tooltip, vykreslujeme s jemným posunem při shodě
       const actualRanks = s.data || [];
       const visualData = actualRanks.map((val, mIdx) => {
         if (val === null || val === undefined) return null;
@@ -421,14 +422,21 @@ async function refreshChart() {
         if (group.length <= 1) return val;
 
         const posInGroup = group.indexOf(idx);
-        const centeredOffset = (posInGroup - (group.length - 1) / 2) * 0.14;
+        const centeredOffset = (posInGroup - (group.length - 1) / 2) * 0.35;
         return Number((val + centeredOffset).toFixed(2));
       });
 
       const pointRadii = actualRanks.map((val, mIdx) => {
         if (val === null || val === undefined) return 0;
         const group = groupsByMonthAndRank[`${mIdx}:${val}`] || [idx];
-        return group.length > 1 ? Math.max(3.5, 5.5 - group.indexOf(idx) * 0.6) : 4;
+        return group.length > 1 ? 5.5 : 4;
+      });
+
+      const pointStyles = actualRanks.map((val, mIdx) => {
+        if (val === null || val === undefined) return 'circle';
+        const group = groupsByMonthAndRank[`${mIdx}:${val}`] || [idx];
+        if (group.length <= 1) return 'circle';
+        return POINT_STYLES[group.indexOf(idx) % POINT_STYLES.length];
       });
 
       return {
@@ -439,10 +447,11 @@ async function refreshChart() {
         backgroundColor: color,
         borderWidth: 2.5,
         borderDash: dash,
-        tension: 0, // rovné spojnice
+        tension: 0,
         spanGaps: true,
+        pointStyle: pointStyles,
         pointRadius: pointRadii,
-        pointHoverRadius: 6,
+        pointHoverRadius: 7,
       };
     });
 
