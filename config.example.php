@@ -6,4 +6,4 @@ define('DB_NAME', 'vase_databaze');
 define('DB_USER', 'vas_uzivatel');
 define('DB_PASS', 'vase_heslo');
 
-define('ORIS_API_URL', 'https://oris.orientacnisporty.cz/API/');
+define('ORIS_API_URL', 'https://oris.ceskyorientak.cz/API/');
