@@ -76,7 +76,11 @@
       <div id="clubMembersBox" class="club-members hidden">
         <div class="club-members-header">
           <strong id="clubMembersTitle">Členové oddílu</strong>
-          <button type="button" id="btnCloseClub" class="btn-link">Zavřít seznam</button>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button type="button" id="btnAddAllClub" class="btn-link">Přidat všechny</button>
+            <button type="button" id="btnClearClub" class="btn-link">Odebrat všechny</button>
+            <button type="button" id="btnCloseClub" class="btn-link">Zavřít seznam</button>
+          </div>
         </div>
         <div id="clubMembersList" class="club-members-list"></div>
       </div>
