@@ -14,6 +14,8 @@ if (!defined('ORIS_API_URL')) {
     define('ORIS_API_URL', 'https://oris.ceskyorientak.cz/API/');
 }
 
+const MIN_RANKING_START_DATE = '2025-03-01';
+
 try {
     $pdo = new PDO(
         'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
@@ -141,12 +143,21 @@ function fetchCsvForGender(string $date, int $rankType, string $gender): array {
 }
 
 function getMonthEndDates(string $from, string $to): array {
+    $minAllowed = new DateTime(MIN_RANKING_START_DATE);
     $start = new DateTime(date('Y-m-01', strtotime($from)));
     $end = new DateTime(date('Y-m-01', strtotime($to)));
     $todayEnd = new DateTime(date('Y-m-t'));
 
     if ($start > $end) {
         [$start, $end] = [$end, $start];
+    }
+
+    if ($start < $minAllowed) {
+        $start = clone $minAllowed;
+    }
+
+    if ($end < $minAllowed) {
+        return [];
     }
 
     $endLastDay = new DateTime($end->format('Y-m-t'));
@@ -365,10 +376,14 @@ if ($action === 'top') {
 if ($action === 'series') {
     $typeId = normalizeTypeId($pdo, (int)($_GET['type_id'] ?? 2));
     $defaultTo = date('Y-m-01');
-    $defaultFrom = date('Y-m-01', strtotime('-1 year'));
+    $defaultFrom = max(MIN_RANKING_START_DATE, date('Y-m-01', strtotime('-1 year')));
 
     $from = normalizeYearMonthOrDate((string)($_GET['from'] ?? ''), $defaultFrom);
     $to = normalizeYearMonthOrDate((string)($_GET['to'] ?? ''), $defaultTo);
+    if ($from < MIN_RANKING_START_DATE) {
+        $from = MIN_RANKING_START_DATE;
+    }
+
     $regNosRaw = (string)($_GET['reg_nos'] ?? '');
 
     $regNos = array_values(array_unique(array_filter(array_map(
