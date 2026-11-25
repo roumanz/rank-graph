@@ -11,11 +11,21 @@ const DASH_PATTERNS = [
   [8, 3, 2, 3, 2, 3]
 ];
 
+function loadSavedAthletes() {
+  try {
+    const raw = localStorage.getItem('oris_selected_athletes');
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
 const state = {
   typeId: null,
   periodMode: 'lastYear', // 'lastYear' | 'custom'
   topGender: 'M', // 'M' | 'F'
-  selectedAthletes: JSON.parse(localStorage.getItem('oris_selected_athletes') || '[]'),
+  selectedAthletes: loadSavedAthletes(),
   clubMembers: [],
   chart: null,
   searchTimer: null,
@@ -52,6 +62,15 @@ const elShareFeedback = document.getElementById('shareFeedback');
 const elSummaryCard = document.getElementById('summaryTableCard');
 const elSummaryThead = document.querySelector('#rankingSummaryTable thead');
 const elSummaryTbody = document.querySelector('#rankingSummaryTable tbody');
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
 function showStatus(msg) {
   if (!msg) {
@@ -174,7 +193,7 @@ async function loadRankingTypes() {
     }
 
     elType.innerHTML = data.types
-      .map(t => `<option value="${t.id}">${t.name}</option>`)
+      .map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`)
       .join('');
 
     const matched = urlType && data.types.some(t => String(t.id) === String(urlType));
@@ -186,7 +205,11 @@ async function loadRankingTypes() {
 }
 
 function saveSelected() {
-  localStorage.setItem('oris_selected_athletes', JSON.stringify(state.selectedAthletes));
+  try {
+    localStorage.setItem('oris_selected_athletes', JSON.stringify(state.selectedAthletes));
+  } catch (_) {
+    // Ignorovat chyby úložiště (např. privátní režim)
+  }
 }
 
 function renderSelectedChips() {
@@ -202,7 +225,7 @@ function renderSelectedChips() {
     chip.className = 'chip';
     chip.style.backgroundColor = color;
     chip.innerHTML = `
-      <span>${athlete.name} (${athlete.reg_no})</span>
+      <span>${escapeHtml(athlete.name)} (${escapeHtml(athlete.reg_no)})</span>
       <button type="button" title="Odebrat">&times;</button>
     `;
     chip.querySelector('button').addEventListener('click', () => {
@@ -223,6 +246,31 @@ function toggleAthlete(athlete) {
     updateClubPillsState();
     refreshChart();
   }
+}
+
+function addAthletesBulk(list) {
+  if (!Array.isArray(list) || !list.length) return false;
+  const existingRegs = new Set(state.selectedAthletes.map(a => a.reg_no));
+  let added = false;
+
+  list.forEach(a => {
+    if (a?.reg_no && !existingRegs.has(a.reg_no)) {
+      state.selectedAthletes.push({
+        reg_no: a.reg_no,
+        name: a.name || a.reg_no,
+      });
+      existingRegs.add(a.reg_no);
+      added = true;
+    }
+  });
+
+  if (added) {
+    saveSelected();
+    renderSelectedChips();
+    updateClubPillsState();
+    refreshChart();
+  }
+  return added;
 }
 
 function removeAthlete(regNo) {
@@ -269,32 +317,36 @@ elSearch.addEventListener('input', () => {
   }
 
   state.searchTimer = setTimeout(async () => {
-    const res = await fetch(`api.php?action=search&type_id=${state.typeId}&q=${encodeURIComponent(q)}`);
-    const data = await res.json();
-    const list = data.athletes || [];
+    try {
+      const res = await fetch(`api.php?action=search&type_id=${encodeURIComponent(state.typeId)}&q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      const list = data.athletes || [];
 
-    if (list.length === 0) {
-      elSearchResults.innerHTML = '<div class="dropdown-item">Nenalezen žádný závodník</div>';
-    } else {
-      elSearchResults.innerHTML = list.map(a => `
-        <div class="dropdown-item" data-reg="${a.reg_no}" data-name="${a.name}">
-          <span><strong>${a.name}</strong> (${a.reg_no})</span>
-          <span style="color:#6b7280;font-size:0.85rem;">nejlépe ${a.best_rank}.</span>
-        </div>
-      `).join('');
+      if (list.length === 0) {
+        elSearchResults.innerHTML = '<div class="dropdown-item">Nenalezen žádný závodník</div>';
+      } else {
+        elSearchResults.innerHTML = list.map(a => `
+          <div class="dropdown-item" data-reg="${escapeHtml(a.reg_no)}" data-name="${escapeHtml(a.name)}">
+            <span><strong>${escapeHtml(a.name)}</strong> (${escapeHtml(a.reg_no)})</span>
+            <span style="color:#6b7280;font-size:0.85rem;">nejlépe ${escapeHtml(a.best_rank)}.</span>
+          </div>
+        `).join('');
 
-      elSearchResults.querySelectorAll('.dropdown-item[data-reg]').forEach(item => {
-        item.addEventListener('click', () => {
-          toggleAthlete({
-            reg_no: item.dataset.reg,
-            name: item.dataset.name,
+        elSearchResults.querySelectorAll('.dropdown-item[data-reg]').forEach(item => {
+          item.addEventListener('click', () => {
+            toggleAthlete({
+              reg_no: item.dataset.reg,
+              name: item.dataset.name,
+            });
+            elSearch.value = '';
+            elSearchResults.classList.add('hidden');
           });
-          elSearch.value = '';
-          elSearchResults.classList.add('hidden');
         });
-      });
+      }
+      elSearchResults.classList.remove('hidden');
+    } catch (_) {
+      elSearchResults.classList.add('hidden');
     }
-    elSearchResults.classList.remove('hidden');
   }, 250);
 });
 
@@ -310,34 +362,38 @@ elBtnLoadClub.addEventListener('click', async () => {
   if (!club) return;
 
   showStatus(`Načítám členy oddílu ${club}…`);
-  const res = await fetch(`api.php?action=search&type_id=${state.typeId}&club=${encodeURIComponent(club)}`);
-  const data = await res.json();
-  showStatus('');
+  try {
+    const res = await fetch(`api.php?action=search&type_id=${encodeURIComponent(state.typeId)}&club=${encodeURIComponent(club)}`);
+    const data = await res.json();
+    showStatus('');
 
-  const list = data.athletes || [];
-  state.clubMembers = list;
-  elClubTitle.textContent = `Členové oddílu ${club} (${list.length})`;
-  elClubList.innerHTML = '';
+    const list = data.athletes || [];
+    state.clubMembers = list;
+    elClubTitle.textContent = `Členové oddílu ${club} (${list.length})`;
+    elClubList.innerHTML = '';
 
-  if (list.length === 0) {
-    elClubList.innerHTML = '<span>Pro tento oddíl nebyli v rankingu nalezeni žádní závodníci.</span>';
-  } else {
-    list.forEach(a => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'member-pill';
-      btn.dataset.regNo = a.reg_no;
-      btn.textContent = `${a.name} (${a.reg_no})`;
-      if (state.selectedAthletes.some(s => s.reg_no === a.reg_no)) {
-        btn.classList.add('selected');
-      }
-      btn.addEventListener('click', () => {
-        toggleAthlete({ reg_no: a.reg_no, name: a.name });
+    if (list.length === 0) {
+      elClubList.innerHTML = '<span>Pro tento oddíl nebyli v rankingu nalezeni žádní závodníci.</span>';
+    } else {
+      list.forEach(a => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'member-pill';
+        btn.dataset.regNo = a.reg_no;
+        btn.textContent = `${a.name} (${a.reg_no})`;
+        if (state.selectedAthletes.some(s => s.reg_no === a.reg_no)) {
+          btn.classList.add('selected');
+        }
+        btn.addEventListener('click', () => {
+          toggleAthlete({ reg_no: a.reg_no, name: a.name });
+        });
+        elClubList.appendChild(btn);
       });
-      elClubList.appendChild(btn);
-    });
+    }
+    elClubBox.classList.remove('hidden');
+  } catch (_) {
+    showStatus('Nepodařilo se načíst členy oddílu.');
   }
-  elClubBox.classList.remove('hidden');
 });
 
 elBtnCloseClub.addEventListener('click', () => {
@@ -345,25 +401,7 @@ elBtnCloseClub.addEventListener('click', () => {
 });
 
 elBtnAddAllClub.addEventListener('click', () => {
-  if (!state.clubMembers.length) return;
-
-  const existingRegs = new Set(state.selectedAthletes.map(a => a.reg_no));
-  let added = false;
-
-  state.clubMembers.forEach(a => {
-    if (!existingRegs.has(a.reg_no)) {
-      state.selectedAthletes.push({ reg_no: a.reg_no, name: a.name });
-      existingRegs.add(a.reg_no);
-      added = true;
-    }
-  });
-
-  if (added) {
-    saveSelected();
-    renderSelectedChips();
-    updateClubPillsState();
-    refreshChart();
-  }
+  addAthletesBulk(state.clubMembers);
 });
 
 elBtnClearClub.addEventListener('click', () => {
@@ -395,7 +433,7 @@ async function fetchTop10() {
   const labelGender = state.topGender === 'F' ? 'žen' : 'mužů';
   showStatus(`Načítám TOP 10 ${labelGender}…`);
   try {
-    const res = await fetch(`api.php?action=top&type_id=${state.typeId}&gender=${state.topGender}&limit=10`);
+    const res = await fetch(`api.php?action=top&type_id=${encodeURIComponent(state.typeId)}&gender=${state.topGender}&limit=10`);
     const data = await res.json();
     showStatus('');
     return Array.isArray(data.athletes) ? data.athletes : [];
@@ -420,23 +458,7 @@ elBtnAddTop10.addEventListener('click', async () => {
   const topList = await fetchTop10();
   if (!topList.length) return;
 
-  const existingRegs = new Set(state.selectedAthletes.map(a => a.reg_no));
-  let added = false;
-
-  topList.forEach(a => {
-    if (!existingRegs.has(a.reg_no)) {
-      state.selectedAthletes.push({ reg_no: a.reg_no, name: a.name });
-      existingRegs.add(a.reg_no);
-      added = true;
-    }
-  });
-
-  if (added) {
-    saveSelected();
-    renderSelectedChips();
-    updateClubPillsState();
-    refreshChart();
-  }
+  addAthletesBulk(topList);
 });
 
 // Přepínání období a typu rankingu
@@ -495,6 +517,23 @@ function setHighlightedAthlete(activeIdx) {
   });
 }
 
+function initSummaryTableEvents() {
+  if (!elSummaryTbody) return;
+
+  elSummaryTbody.addEventListener('mouseover', (e) => {
+    const tr = e.target.closest('tr[data-series-idx]');
+    if (tr) {
+      setHighlightedAthlete(Number(tr.dataset.seriesIdx));
+    }
+  });
+
+  elSummaryTbody.addEventListener('mouseleave', () => {
+    if (state.activeDatasetIndex !== null) {
+      setHighlightedAthlete(null);
+    }
+  });
+}
+
 // Vykreslení tabulky přehledu pod grafem
 function renderSummaryTable(labels, rawSeries) {
   if (!rawSeries.length || !labels.length) {
@@ -509,7 +548,7 @@ function renderSummaryTable(labels, rawSeries) {
   elSummaryThead.innerHTML = `
     <tr>
       <th>Závodník</th>
-      ${labels.map(m => `<th>${m}</th>`).join('')}
+      ${labels.map(m => `<th>${escapeHtml(m)}</th>`).join('')}
     </tr>
   `;
 
@@ -517,22 +556,16 @@ function renderSummaryTable(labels, rawSeries) {
     const color = COLORS[idx % COLORS.length];
     const cells = labels.map((_m, mIdx) => {
       const rank = s.data?.[mIdx];
-      return `<td>${rank !== null && rank !== undefined ? `${rank}.` : '–'}</td>`;
+      return `<td>${rank !== null && rank !== undefined ? `${escapeHtml(rank)}.` : '–'}</td>`;
     }).join('');
 
     return `
       <tr data-series-idx="${idx}">
-        <td><span class="color-dot" style="background:${color}"></span>${s.name} (${s.reg_no})</td>
+        <td><span class="color-dot" style="background:${color}"></span>${escapeHtml(s.name)} (${escapeHtml(s.reg_no)})</td>
         ${cells}
       </tr>
     `;
   }).join('');
-
-  elSummaryTbody.querySelectorAll('tr[data-series-idx]').forEach(tr => {
-    const idx = Number(tr.dataset.seriesIdx);
-    tr.addEventListener('mouseenter', () => setHighlightedAthlete(idx));
-    tr.addEventListener('mouseleave', () => setHighlightedAthlete(null));
-  });
 }
 
 // Plugin pro vykreslení pořadí přímo na puntících v grafu
@@ -586,7 +619,7 @@ async function refreshChart() {
   showStatus('Načítám data (pokud chybí v databázi, stahuji z ORISu)…');
 
   try {
-    const url = `api.php?action=series&type_id=${state.typeId}&from=${from}&to=${to}&reg_nos=${encodeURIComponent(regNos)}`;
+    const url = `api.php?action=series&type_id=${encodeURIComponent(state.typeId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&reg_nos=${encodeURIComponent(regNos)}`;
     const res = await fetch(url);
     const data = await res.json();
 
@@ -771,6 +804,7 @@ function renderChart(labels, datasets) {
 
 // Inicializace
 (async function init() {
+  initSummaryTableEvents();
   initDefaultDates();
   applyUrlStateBeforeTypes();
   renderSelectedChips();
