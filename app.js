@@ -15,6 +15,7 @@ const state = {
   typeId: null,
   periodMode: 'lastYear', // 'lastYear' | 'custom'
   selectedAthletes: JSON.parse(localStorage.getItem('oris_selected_athletes') || '[]'),
+  clubMembers: [],
   chart: null,
   searchTimer: null,
 };
