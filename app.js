@@ -11,6 +11,13 @@ const DASH_PATTERNS = [
   [8, 3, 2, 3, 2, 3]
 ];
 
+const MIN_RANKING_MONTH = '2025-03';
+
+function clampMonthToMin(val) {
+  if (!val) return MIN_RANKING_MONTH;
+  return val < MIN_RANKING_MONTH ? MIN_RANKING_MONTH : val;
+}
+
 function loadSavedAthletes() {
   try {
     const raw = localStorage.getItem('oris_selected_athletes');
@@ -88,20 +95,29 @@ function getPeriodRange() {
 
   if (state.periodMode === 'lastYear') {
     const past = new Date(now.getFullYear() - 1, now.getMonth(), 1);
-    const fromStr = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}-01`;
+    const rawFrom = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}`;
+    const fromStr = `${clampMonthToMin(rawFrom)}-01`;
     return { from: fromStr, to: toStr };
   }
 
-  const fromVal = elDateFrom.value ? `${elDateFrom.value}-01` : toStr;
-  const toVal = elDateTo.value ? `${elDateTo.value}-01` : toStr;
-  return { from: fromVal, to: toVal };
+  const fromMonth = clampMonthToMin(elDateFrom.value);
+  const toMonth = elDateTo.value ? clampMonthToMin(elDateTo.value) : toStr.slice(0, 7);
+  return {
+    from: `${fromMonth}-01`,
+    to: `${toMonth}-01`,
+  };
 }
 
 function initDefaultDates() {
   const now = new Date();
   const past = new Date(now.getFullYear() - 1, now.getMonth(), 1);
-  elDateTo.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  elDateFrom.value = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}`;
+  const defaultTo = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const defaultFrom = clampMonthToMin(`${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}`);
+
+  elDateFrom.min = MIN_RANKING_MONTH;
+  elDateTo.min = MIN_RANKING_MONTH;
+  elDateFrom.value = defaultFrom;
+  elDateTo.value = defaultTo;
 }
 
 function applyUrlStateBeforeTypes() {
@@ -123,7 +139,7 @@ function applyUrlStateBeforeTypes() {
   const fromParam = params.get('from');
   const toParam = params.get('to');
   if (fromParam && /^\d{4}-\d{2}/.test(fromParam)) {
-    elDateFrom.value = fromParam.slice(0, 7);
+    elDateFrom.value = clampMonthToMin(fromParam.slice(0, 7));
     if (!period) {
       state.periodMode = 'custom';
       elBtnCustom.classList.add('active');
@@ -132,13 +148,17 @@ function applyUrlStateBeforeTypes() {
     }
   }
   if (toParam && /^\d{4}-\d{2}/.test(toParam)) {
-    elDateTo.value = toParam.slice(0, 7);
+    elDateTo.value = clampMonthToMin(toParam.slice(0, 7));
     if (!period) {
       state.periodMode = 'custom';
       elBtnCustom.classList.add('active');
       elBtnLastYear.classList.remove('active');
       elCustomBox.classList.remove('hidden');
     }
+  }
+
+  if (elDateFrom.value && elDateTo.value && elDateFrom.value > elDateTo.value) {
+    elDateTo.value = elDateFrom.value;
   }
 
   const regsParam = params.get('regs');
@@ -163,8 +183,8 @@ function buildShareUrl() {
   }
   params.set('period', state.periodMode);
   if (state.periodMode === 'custom') {
-    if (elDateFrom.value) params.set('from', elDateFrom.value);
-    if (elDateTo.value) params.set('to', elDateTo.value);
+    if (elDateFrom.value) params.set('from', clampMonthToMin(elDateFrom.value));
+    if (elDateTo.value) params.set('to', clampMonthToMin(elDateTo.value));
   }
   const regs = state.selectedAthletes.map(a => a.reg_no);
   if (regs.length > 0) {
@@ -504,8 +524,21 @@ elBtnCustom.addEventListener('click', () => {
   refreshChart();
 });
 
-elDateFrom.addEventListener('change', refreshChart);
-elDateTo.addEventListener('change', refreshChart);
+elDateFrom.addEventListener('change', () => {
+  elDateFrom.value = clampMonthToMin(elDateFrom.value);
+  if (elDateTo.value && elDateFrom.value > elDateTo.value) {
+    elDateTo.value = elDateFrom.value;
+  }
+  refreshChart();
+});
+
+elDateTo.addEventListener('change', () => {
+  elDateTo.value = clampMonthToMin(elDateTo.value);
+  if (elDateFrom.value && elDateTo.value < elDateFrom.value) {
+    elDateFrom.value = elDateTo.value;
+  }
+  refreshChart();
+});
 
 // Zvýraznění aktivního závodníka (v grafu i v tabulce)
 function setHighlightedAthlete(activeIdx) {
@@ -597,22 +630,36 @@ const rankLabelsPlugin = {
     const datasets = chart.data.datasets || [];
     if (!datasets.length) return;
 
-    const placedByPoint = {};
+    const placedBoxes = [];
 
     datasets.forEach((ds, dsIdx) => {
       const meta = chart.getDatasetMeta(dsIdx);
       if (meta.hidden) return;
 
       const actualRanks = ds._actualRanks || [];
+      let lastDrawnX = -Infinity;
+      let lastDrawnY = -Infinity;
+
       meta.data.forEach((pt, idx) => {
         const rank = actualRanks[idx];
         if (rank === null || rank === undefined || !pt || pt.skip) return;
 
-        const key = `${Math.round(pt.x)}:${Math.round(pt.y)}`;
-        const stackIdx = placedByPoint[key] || 0;
-        placedByPoint[key] = stackIdx + 1;
+        if (Math.abs(pt.x - lastDrawnX) < 16 && Math.abs(pt.y - lastDrawnY) < 10) {
+          return;
+        }
 
         const isActive = state.activeDatasetIndex === dsIdx;
+        const labelText = `${rank}.`;
+        const textX = pt.x + 6;
+        let textY = pt.y - 9;
+
+        const nearbyCount = placedBoxes.filter(
+          b => Math.abs(b.x - textX) < 14 && Math.abs(b.y - textY) < 11
+        ).length;
+        if (nearbyCount > 0) {
+          textY += nearbyCount * 11;
+        }
+
         ctx.save();
         ctx.font = isActive
           ? 'bold 11px system-ui, -apple-system, sans-serif'
@@ -620,10 +667,12 @@ const rankLabelsPlugin = {
         ctx.fillStyle = ds._baseColor || '#1f2937';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-
-        const offsetY = stackIdx === 0 ? -9 : stackIdx * 11 - 9;
-        ctx.fillText(`${rank}.`, pt.x + 6, pt.y + offsetY);
+        ctx.fillText(labelText, textX, textY);
         ctx.restore();
+
+        placedBoxes.push({ x: textX, y: textY });
+        lastDrawnX = pt.x;
+        lastDrawnY = pt.y;
       });
     });
   }
@@ -727,7 +776,7 @@ async function refreshChart() {
         borderWidth: 2.5,
         borderDash: dash,
         tension: 0,
-        spanGaps: true,
+        spanGaps: false,
         pointStyle: pointStyles,
         pointRadius: pointRadii,
         pointHoverRadius: 7,
@@ -794,6 +843,10 @@ function renderChart(labels, datasets) {
       },
       scales: {
         x: {
+          ticks: {
+            autoSkip: true,
+            maxTicksLimit: 24,
+          },
           title: {
             display: true,
             text: 'Období (měsíc vydání rankingu)',
