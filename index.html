@@ -72,6 +72,24 @@
         </div>
       </div>
 
+      <hr class="divider">
+
+      <!-- Rychlý výběr TOP 10 podle pohlaví -->
+      <div class="control-row" style="align-items:flex-end;gap:12px;flex-wrap:wrap;">
+        <div class="control-group">
+          <label>Porovnat TOP 10 žebříčku</label>
+          <div class="period-toggle" id="topGenderToggle">
+            <button type="button" id="btnGenderM" class="btn-toggle active" data-gender="M">Muži</button>
+            <button type="button" id="btnGenderF" class="btn-toggle" data-gender="F">Ženy</button>
+          </div>
+        </div>
+
+        <div class="control-group" style="flex-direction:row;gap:8px;align-items:center;">
+          <button type="button" id="btnLoadTop10" class="btn-secondary">Načíst TOP 10</button>
+          <button type="button" id="btnAddTop10" class="btn-link">Přidat ke stávajícím</button>
+        </div>
+      </div>
+
       <!-- Seznam členů oddílu pro rychlé zaklikání -->
       <div id="clubMembersBox" class="club-members hidden">
         <div class="club-members-header">
@@ -92,17 +110,4 @@
       </div>
     </section>
 
-    <!-- Stavová hláška (načítání z ORISu / chyba) -->
-    <div id="statusBar" class="status-bar hidden"></div>
-
-    <!-- Plátno pro graf -->
-    <section class="chart-card">
-      <div class="chart-wrapper">
-        <canvas id="rankingChart"></canvas>
-      </div>
-    </section>
-  </div>
-
-  <script src="app.js"></script>
-</body>
-</html>
+    <!-- Stavová hl
