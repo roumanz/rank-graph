@@ -3,6 +3,14 @@ const COLORS = [
   '#0891b2', '#db2777', '#4f46e5', '#65a30d', '#ea580c'
 ];
 
+const DASH_PATTERNS = [
+  [],
+  [6, 4],
+  [2, 3],
+  [10, 4, 2, 4],
+  [8, 3, 2, 3, 2, 3]
+];
+
 const state = {
   typeId: null,
   periodMode: 'lastYear', // 'lastYear' | 'custom'
@@ -28,6 +36,8 @@ const elClubList = document.getElementById('clubMembersList');
 const elBtnCloseClub = document.getElementById('btnCloseClub');
 const elSelectedChips = document.getElementById('selectedAthletes');
 const elStatus = document.getElementById('statusBar');
+const elBtnShareLink = document.getElementById('btnShareLink');
+const elShareFeedback = document.getElementById('shareFeedback');
 
 function showStatus(msg) {
   if (!msg) {
@@ -60,20 +70,102 @@ function initDefaultDates() {
   elDateFrom.value = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function applyUrlStateBeforeTypes() {
+  const params = new URLSearchParams(window.location.search);
+
+  const period = params.get('period');
+  if (period === 'custom') {
+    state.periodMode = 'custom';
+    elBtnCustom.classList.add('active');
+    elBtnLastYear.classList.remove('active');
+    elCustomBox.classList.remove('hidden');
+  } else if (period === 'lastYear') {
+    state.periodMode = 'lastYear';
+    elBtnLastYear.classList.add('active');
+    elBtnCustom.classList.remove('active');
+    elCustomBox.classList.add('hidden');
+  }
+
+  const fromParam = params.get('from');
+  const toParam = params.get('to');
+  if (fromParam && /^\d{4}-\d{2}/.test(fromParam)) {
+    elDateFrom.value = fromParam.slice(0, 7);
+    if (!period) {
+      state.periodMode = 'custom';
+      elBtnCustom.classList.add('active');
+      elBtnLastYear.classList.remove('active');
+      elCustomBox.classList.remove('hidden');
+    }
+  }
+  if (toParam && /^\d{4}-\d{2}/.test(toParam)) {
+    elDateTo.value = toParam.slice(0, 7);
+    if (!period) {
+      state.periodMode = 'custom';
+      elBtnCustom.classList.add('active');
+      elBtnLastYear.classList.remove('active');
+      elCustomBox.classList.remove('hidden');
+    }
+  }
+
+  const regsParam = params.get('regs');
+  if (regsParam !== null) {
+    const regs = regsParam
+      .split(',')
+      .map(r => r.trim().toUpperCase())
+      .filter(Boolean);
+
+    state.selectedAthletes = regs.map(reg => {
+      const existing = state.selectedAthletes.find(a => a.reg_no === reg);
+      return existing || { reg_no: reg, name: reg };
+    });
+    saveSelected();
+  }
+}
+
+function buildShareUrl() {
+  const params = new URLSearchParams();
+  if (state.typeId) {
+    params.set('type', String(state.typeId));
+  }
+  params.set('period', state.periodMode);
+  if (state.periodMode === 'custom') {
+    if (elDateFrom.value) params.set('from', elDateFrom.value);
+    if (elDateTo.value) params.set('to', elDateTo.value);
+  }
+  const regs = state.selectedAthletes.map(a => a.reg_no);
+  if (regs.length > 0) {
+    params.set('regs', regs.join(','));
+  }
+  const url = new URL(window.location.href);
+  url.search = params.toString();
+  return url.toString();
+}
+
+function syncUrlQuietly() {
+  const shareUrl = buildShareUrl();
+  window.history.replaceState(null, '', shareUrl);
+}
+
 async function loadRankingTypes() {
+  const params = new URLSearchParams(window.location.search);
+  const urlType = params.get('type');
+
   try {
     const res = await fetch('api.php?action=types');
     const data = await res.json();
     if (!data.types || data.types.length === 0) {
       elType.innerHTML = '<option value="1">Ranking OB (výchozí)</option>';
-      state.typeId = 1;
+      state.typeId = urlType || '1';
       return;
     }
 
     elType.innerHTML = data.types
       .map(t => `<option value="${t.id}">${t.name}</option>`)
       .join('');
-    state.typeId = data.types[0].id;
+
+    const matched = urlType && data.types.some(t => String(t.id) === String(urlType));
+    state.typeId = matched ? String(urlType) : String(data.types[0].id);
+    elType.value = state.typeId;
   } catch (err) {
     showStatus('Nepodařilo se načíst typy rankingů.');
   }
@@ -135,6 +227,23 @@ function updateClubPillsState() {
     pill.classList.toggle('selected', isSel);
   });
 }
+
+// Sdílení odkazu
+elBtnShareLink.addEventListener('click', async () => {
+  const shareUrl = buildShareUrl();
+  window.history.replaceState(null, '', shareUrl);
+
+  try {
+    await navigator.clipboard.writeText(shareUrl);
+    elShareFeedback.textContent = 'Odkaz zkopírován';
+  } catch (_) {
+    window.prompt('Zkopírujte odkaz pro sdílení:', shareUrl);
+    elShareFeedback.textContent = 'Odkaz připraven';
+  }
+  setTimeout(() => {
+    elShareFeedback.textContent = '';
+  }, 3000);
+});
 
 // Vyhledávání závodníků podle jména nebo registračky
 elSearch.addEventListener('input', () => {
@@ -247,6 +356,8 @@ elDateTo.addEventListener('change', refreshChart);
 
 // Vykreslení a aktualizace grafu
 async function refreshChart() {
+  syncUrlQuietly();
+
   const { from, to } = getPeriodRange();
   const regNos = state.selectedAthletes.map(a => a.reg_no).join(',');
 
@@ -269,18 +380,68 @@ async function refreshChart() {
       showStatus('');
     }
 
+    // Doplníme případná plná jména ze série, pokud přišla z URL jen registračku
+    let namesUpdated = false;
+    (data.series || []).forEach(s => {
+      const sel = state.selectedAthletes.find(a => a.reg_no === s.reg_no);
+      if (sel && sel.name === sel.reg_no && s.name && s.name !== s.reg_no) {
+        sel.name = s.name;
+        namesUpdated = true;
+      }
+    });
+    if (namesUpdated) {
+      saveSelected();
+      renderSelectedChips();
+    }
+
     const labels = (data.dates || []).map(d => d.slice(0, 7)); // YYYY-MM
-    const datasets = (data.series || []).map((s, idx) => {
+    const rawSeries = data.series || [];
+
+    // Spočítáme kolik závodníků má ve stejném měsíci stejné pořadí
+    const groupsByMonthAndRank = {};
+    rawSeries.forEach((s, sIdx) => {
+      (s.data || []).forEach((val, mIdx) => {
+        if (val !== null && val !== undefined) {
+          const key = `${mIdx}:${val}`;
+          if (!groupsByMonthAndRank[key]) groupsByMonthAndRank[key] = [];
+          groupsByMonthAndRank[key].push(sIdx);
+        }
+      });
+    });
+
+    const datasets = rawSeries.map((s, idx) => {
       const color = COLORS[idx % COLORS.length];
+      const dash = DASH_PATTERNS[idx % DASH_PATTERNS.length];
+
+      // Skutečné pořadí držíme zvlášť pro tooltip, vykreslujeme s jemným posunem při shodě
+      const actualRanks = s.data || [];
+      const visualData = actualRanks.map((val, mIdx) => {
+        if (val === null || val === undefined) return null;
+        const group = groupsByMonthAndRank[`${mIdx}:${val}`] || [idx];
+        if (group.length <= 1) return val;
+
+        const posInGroup = group.indexOf(idx);
+        const centeredOffset = (posInGroup - (group.length - 1) / 2) * 0.14;
+        return Number((val + centeredOffset).toFixed(2));
+      });
+
+      const pointRadii = actualRanks.map((val, mIdx) => {
+        if (val === null || val === undefined) return 0;
+        const group = groupsByMonthAndRank[`${mIdx}:${val}`] || [idx];
+        return group.length > 1 ? Math.max(3.5, 5.5 - group.indexOf(idx) * 0.6) : 4;
+      });
+
       return {
         label: `${s.name} (${s.reg_no})`,
-        data: s.data,
+        data: visualData,
+        _actualRanks: actualRanks,
         borderColor: color,
         backgroundColor: color,
         borderWidth: 2.5,
-        tension: 0.2,
+        borderDash: dash,
+        tension: 0, // rovné spojnice
         spanGaps: true,
-        pointRadius: 4,
+        pointRadius: pointRadii,
         pointHoverRadius: 6,
       };
     });
@@ -315,8 +476,10 @@ function renderChart(labels, datasets) {
         tooltip: {
           callbacks: {
             label: (ctx) => {
-              const val = ctx.parsed.y;
-              return val !== null ? `${ctx.dataset.label}: ${val}. místo` : `${ctx.dataset.label}: nehodnocen`;
+              const actual = ctx.dataset._actualRanks?.[ctx.dataIndex];
+              return actual !== null && actual !== undefined
+                ? `${ctx.dataset.label}: ${actual}. místo`
+                : `${ctx.dataset.label}: nehodnocen`;
             }
           }
         }
@@ -333,7 +496,7 @@ function renderChart(labels, datasets) {
           beginAtZero: false,
           ticks: {
             precision: 0,
-            callback: (val) => `${val}.`
+            callback: (val) => Number.isInteger(val) ? `${val}.` : ''
           },
           title: {
             display: true,
@@ -348,6 +511,7 @@ function renderChart(labels, datasets) {
 // Inicializace
 (async function init() {
   initDefaultDates();
+  applyUrlStateBeforeTypes();
   renderSelectedChips();
   await loadRankingTypes();
   await refreshChart();
