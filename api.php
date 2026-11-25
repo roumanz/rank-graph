@@ -1,9 +1,10 @@
 <?php
 header('Content-Type: application/json; charset=utf-8');
+header('X-Content-Type-Options: nosniff');
 
 if (!file_exists(__DIR__ . '/config.php')) {
     http_response_code(500);
-    echo json_encode(['error' => 'Chybi soubor config.php']);
+    echo json_encode(['error' => 'Chybi konfigurace serveru.']);
     exit;
 }
 
@@ -21,17 +22,48 @@ try {
         [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
         ]
     );
 } catch (PDOException $e) {
+    error_log('DB connection error: ' . $e->getMessage());
     http_response_code(500);
-    echo json_encode(['error' => 'Chyba DB: ' . $e->getMessage()]);
+    echo json_encode(['error' => 'Chyba připojení k databázi.']);
     exit;
 }
 
 $action = $_GET['action'] ?? '';
 
+function normalizeTypeId(PDO $pdo, int $rawTypeId): int {
+    $stmt = $pdo->query("SELECT id FROM ranking_types ORDER BY id ASC");
+    $validIds = array_map('intval', array_column($stmt->fetchAll(), 'id'));
+
+    if (!empty($validIds)) {
+        return in_array($rawTypeId, $validIds, true) ? $rawTypeId : $validIds[0];
+    }
+
+    return in_array($rawTypeId, [2, 8], true) ? $rawTypeId : 2;
+}
+
+function normalizeYearMonthOrDate(string $val, string $fallback): string {
+    $val = trim($val);
+    if (preg_match('/^\d{4}-\d{2}$/', $val)) {
+        return $val . '-01';
+    }
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $val)) {
+        $dt = DateTime::createFromFormat('Y-m-d', $val);
+        if ($dt && $dt->format('Y-m-d') === $val) {
+            return $val;
+        }
+    }
+    return $fallback;
+}
+
 function fetchCsvForGender(string $date, int $rankType, string $gender): array {
+    if (!in_array($gender, ['M', 'F'], true)) {
+        return [];
+    }
+
     $url = 'https://oris.ceskyorientak.cz/ranking_export?' . http_build_query([
         'date' => $date,
         'sport' => 1,
@@ -44,11 +76,15 @@ function fetchCsvForGender(string $date, int $rankType, string $gender): array {
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT => 25,
-        CURLOPT_USERAGENT => 'ORIS-Ranking-App/1.0',
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_TIMEOUT => 20,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'ORIS-Ranking-App/1.1',
     ]);
     $raw = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
     if ($raw === false || $code !== 200 || trim($raw) === '') {
@@ -109,6 +145,10 @@ function getMonthEndDates(string $from, string $to): array {
     $end = new DateTime(date('Y-m-01', strtotime($to)));
     $todayEnd = new DateTime(date('Y-m-t'));
 
+    if ($start > $end) {
+        [$start, $end] = [$end, $start];
+    }
+
     $endLastDay = new DateTime($end->format('Y-m-t'));
     if ($endLastDay > $todayEnd) {
         $endLastDay = $todayEnd;
@@ -162,24 +202,33 @@ function syncDates(PDO $pdo, int $typeId, array $dates, int $limit = 12): int {
 
         if (!empty($all)) {
             $pdo->beginTransaction();
-            foreach ($all as $r) {
-                $insRow->execute([
+            try {
+                foreach ($all as $r) {
+                    $insRow->execute([
+                        ':type_id' => $typeId,
+                        ':ranking_date' => $date,
+                        ':reg_no' => $r['reg_no'],
+                        ':name' => $r['name'],
+                        ':club' => $r['club'],
+                        ':gender' => $r['gender'],
+                        ':rank_pos' => $r['rank_pos'],
+                    ]);
+                }
+                $insSnap->execute([
                     ':type_id' => $typeId,
                     ':ranking_date' => $date,
-                    ':reg_no' => $r['reg_no'],
-                    ':name' => $r['name'],
-                    ':club' => $r['club'],
-                    ':gender' => $r['gender'],
-                    ':rank_pos' => $r['rank_pos'],
+                    ':rows_count' => count($all),
                 ]);
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                error_log('Sync transaction error: ' . $e->getMessage());
+                continue;
             }
-            $insSnap->execute([
-                ':type_id' => $typeId,
-                ':ranking_date' => $date,
-                ':rows_count' => count($all),
-            ]);
-            $pdo->commit();
-        } else {
+        } elseif ($date !== date('Y-m-t')) {
+            // U starších měsíců zapíšeme prázdný snapshot, u běžného měsíce necháme možnost zkusit znovu
             $insSnap->execute([
                 ':type_id' => $typeId,
                 ':ranking_date' => $date,
@@ -217,13 +266,18 @@ if ($action === 'types') {
 }
 
 if ($action === 'search') {
-    $typeId = (int)($_GET['type_id'] ?? 2);
-    $q = trim($_GET['q'] ?? '');
-    $club = strtoupper(trim($_GET['club'] ?? ''));
+    $typeId = normalizeTypeId($pdo, (int)($_GET['type_id'] ?? 2));
+    $q = trim((string)($_GET['q'] ?? ''));
+    $club = strtoupper(trim((string)($_GET['club'] ?? '')));
 
     syncDates($pdo, $typeId, [date('Y-m-t')], 1);
 
     if ($club !== '') {
+        if (!preg_match('/^[A-Z0-9]{2,6}$/', $club)) {
+            echo json_encode(['athletes' => []]);
+            exit;
+        }
+
         $stmt = $pdo->prepare("
             SELECT reg_no, MAX(name) AS name, club, MAX(gender) AS gender, MIN(rank_pos) AS best_rank
             FROM rankings
@@ -240,11 +294,12 @@ if ($action === 'search') {
         exit;
     }
 
-    if (strlen($q) < 2) {
+    if (mb_strlen($q) < 2) {
         echo json_encode(['athletes' => []]);
         exit;
     }
 
+    $q = mb_substr($q, 0, 80);
     $like = '%' . $q . '%';
     $stmt = $pdo->prepare("
         SELECT reg_no, MAX(name) AS name, club, MAX(gender) AS gender, MIN(rank_pos) AS best_rank
@@ -260,13 +315,13 @@ if ($action === 'search') {
 }
 
 if ($action === 'top') {
-    $typeId = (int)($_GET['type_id'] ?? 2);
-    $gender = strtoupper(trim($_GET['gender'] ?? 'M'));
+    $typeId = normalizeTypeId($pdo, (int)($_GET['type_id'] ?? 2));
+    $gender = strtoupper(trim((string)($_GET['gender'] ?? 'M')));
     if (!in_array($gender, ['M', 'F'], true)) {
         $gender = 'M';
     }
     $limit = max(1, min(50, (int)($_GET['limit'] ?? 10)));
-    $date = trim($_GET['date'] ?? '');
+    $date = trim((string)($_GET['date'] ?? ''));
 
     syncDates($pdo, $typeId, [date('Y-m-t')], 1);
 
@@ -278,6 +333,8 @@ if ($action === 'top') {
         ");
         $stmtDate->execute([':type_id' => $typeId, ':gender' => $gender]);
         $date = (string)($stmtDate->fetchColumn() ?: date('Y-m-t'));
+    } elseif (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        $date = date('Y-m-t');
     }
 
     $stmt = $pdo->prepare("
@@ -306,15 +363,22 @@ if ($action === 'top') {
 }
 
 if ($action === 'series') {
-    $typeId = (int)($_GET['type_id'] ?? 2);
-    $from = $_GET['from'] ?? date('Y-m-d', strtotime('-1 year'));
-    $to = $_GET['to'] ?? date('Y-m-d');
-    $regNosRaw = $_GET['reg_nos'] ?? '';
+    $typeId = normalizeTypeId($pdo, (int)($_GET['type_id'] ?? 2));
+    $defaultTo = date('Y-m-01');
+    $defaultFrom = date('Y-m-01', strtotime('-1 year'));
 
-    $regNos = array_values(array_filter(array_map(
-        fn($r) => strtoupper(trim($r)),
+    $from = normalizeYearMonthOrDate((string)($_GET['from'] ?? ''), $defaultFrom);
+    $to = normalizeYearMonthOrDate((string)($_GET['to'] ?? ''), $defaultTo);
+    $regNosRaw = (string)($_GET['reg_nos'] ?? '');
+
+    $regNos = array_values(array_unique(array_filter(array_map(
+        function ($r) {
+            $clean = strtoupper(trim($r));
+            return preg_match('/^[A-Z0-9]{2,12}$/', $clean) ? $clean : '';
+        },
         explode(',', $regNosRaw)
-    )));
+    ))));
+    $regNos = array_slice($regNos, 0, 80);
 
     $dates = getMonthEndDates($from, $to);
     $newlySynced = syncDates($pdo, $typeId, $dates, 12);
@@ -355,8 +419,10 @@ if ($action === 'series') {
 
     foreach ($rows as $row) {
         $reg = $row['reg_no'];
-        $byAthlete[$reg]['name'] = $row['name'];
-        $byAthlete[$reg]['points'][$row['ranking_date']] = (int)$row['rank_pos'];
+        if (isset($byAthlete[$reg])) {
+            $byAthlete[$reg]['name'] = $row['name'];
+            $byAthlete[$reg]['points'][$row['ranking_date']] = (int)$row['rank_pos'];
+        }
     }
 
     $series = [];
