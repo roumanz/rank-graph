@@ -8,7 +8,9 @@
   --border: #e5e7eb;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -96,6 +98,7 @@ select:focus {
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
+  width: fit-content;
 }
 
 .btn-toggle {
@@ -106,6 +109,9 @@ select:focus {
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 500;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .btn-toggle.active {
