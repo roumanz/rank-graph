@@ -19,6 +19,7 @@ const state = {
   clubMembers: [],
   chart: null,
   searchTimer: null,
+  activeDatasetIndex: null,
 };
 
 // DOM prvky
@@ -46,6 +47,14 @@ const elSelectedChips = document.getElementById('selectedAthletes');
 const elStatus = document.getElementById('statusBar');
 const elBtnShareLink = document.getElementById('btnShareLink');
 const elShareFeedback = document.getElementById('shareFeedback');
+
+function hexToRgba(hex, alpha) {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 function showStatus(msg) {
   if (!msg) {
@@ -458,9 +467,40 @@ elBtnCustom.addEventListener('click', () => {
 elDateFrom.addEventListener('change', refreshChart);
 elDateTo.addEventListener('change', refreshChart);
 
+function applyDatasetHighlight(activeIdx) {
+  if (!state.chart) return;
+  state.activeDatasetIndex = activeIdx;
+
+  state.chart.data.datasets.forEach((ds, idx) => {
+    const baseColor = ds._baseColor;
+    const baseWidth = ds._baseBorderWidth ?? 2.5;
+    const baseRadii = ds._basePointRadii;
+
+    if (activeIdx === null || activeIdx === undefined) {
+      ds.borderColor = baseColor;
+      ds.backgroundColor = baseColor;
+      ds.borderWidth = baseWidth;
+      ds.pointRadius = baseRadii;
+    } else if (idx === activeIdx) {
+      ds.borderColor = baseColor;
+      ds.backgroundColor = baseColor;
+      ds.borderWidth = 4.5;
+      ds.pointRadius = baseRadii.map(r => (r > 0 ? Math.max(r, 6) : 0));
+    } else {
+      ds.borderColor = hexToRgba(baseColor, 0.22);
+      ds.backgroundColor = hexToRgba(baseColor, 0.22);
+      ds.borderWidth = 1.5;
+      ds.pointRadius = baseRadii.map(r => (r > 0 ? 2.5 : 0));
+    }
+  });
+
+  state.chart.update('none');
+}
+
 // Vykreslení a aktualizace grafu
 async function refreshChart() {
   syncUrlQuietly();
+  state.activeDatasetIndex = null;
 
   const { from, to } = getPeriodRange();
   const regNos = state.selectedAthletes.map(a => a.reg_no).join(',');
@@ -484,7 +524,6 @@ async function refreshChart() {
       showStatus('');
     }
 
-    // Doplníme případná plná jména ze série, pokud přišla z URL jen registračku
     let namesUpdated = false;
     (data.series || []).forEach(s => {
       const sel = state.selectedAthletes.find(a => a.reg_no === s.reg_no);
@@ -501,7 +540,6 @@ async function refreshChart() {
     const labels = (data.dates || []).map(d => d.slice(0, 7)); // YYYY-MM
     const rawSeries = data.series || [];
 
-    // Spočítáme kolik závodníků má ve stejném měsíci stejné pořadí
     const groupsByMonthAndRank = {};
     rawSeries.forEach((s, sIdx) => {
       (s.data || []).forEach((val, mIdx) => {
@@ -547,6 +585,9 @@ async function refreshChart() {
         label: `${s.name} (${s.reg_no})`,
         data: visualData,
         _actualRanks: actualRanks,
+        _baseColor: color,
+        _baseBorderWidth: 2.5,
+        _basePointRadii: pointRadii.slice(),
         borderColor: color,
         backgroundColor: color,
         borderWidth: 2.5,
@@ -579,8 +620,15 @@ function renderChart(labels, datasets) {
       responsive: true,
       maintainAspectRatio: false,
       interaction: {
-        mode: 'index',
+        mode: 'nearest',
+        axis: 'xy',
         intersect: false,
+      },
+      onHover: (_event, elements) => {
+        const hoveredIdx = elements && elements.length > 0 ? elements[0].datasetIndex : null;
+        if (hoveredIdx !== state.activeDatasetIndex) {
+          applyDatasetHighlight(hoveredIdx);
+        }
       },
       plugins: {
         legend: {
@@ -619,6 +667,13 @@ function renderChart(labels, datasets) {
       }
     }
   });
+
+  const canvas = document.getElementById('rankingChart');
+  canvas.onmouseleave = () => {
+    if (state.activeDatasetIndex !== null) {
+      applyDatasetHighlight(null);
+    }
+  };
 }
 
 // Inicializace
